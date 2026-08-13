@@ -120,6 +120,32 @@ resource "null_resource" "vendor_memory_mcp" {
 }
 
 ########################################
+# Sync the shared VTON prompt-engineering package into tryon-mcp's build context.
+# Canonical copy: components/shared/vton_engines (the per-consumer copies are
+# gitignored), so a fresh clone has nothing to zip and the deployed function
+# raises ImportError on `from vton_engines import build_request`. The deploy CLI
+# syncs in `storeai up`; doing it here keeps a direct `terraform apply` correct
+# too. Re-runs when the canonical package changes.
+########################################
+
+resource "null_resource" "sync_vton_engines" {
+  triggers = {
+    engines = sha1(join("", [
+      for f in sort(tolist(fileset("${var.mcp_source_root}/../shared/vton_engines", "*.py"))) :
+      filemd5("${var.mcp_source_root}/../shared/vton_engines/${f}")
+    ]))
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      mkdir -p "${var.mcp_source_root}/tryon-mcp/vton_engines"
+      cp -f "${var.mcp_source_root}/../shared/vton_engines"/*.py "${var.mcp_source_root}/tryon-mcp/vton_engines/"
+    EOT
+  }
+}
+
+########################################
 # Package + deploy each function
 ########################################
 
@@ -129,8 +155,9 @@ data "archive_file" "mcp" {
   source_dir  = "${var.mcp_source_root}/${each.key}"
   output_path = "${path.module}/build/${each.key}.zip"
 
-  # memory-mcp needs its vendored boto3 present before zipping.
-  depends_on = [null_resource.vendor_memory_mcp]
+  # memory-mcp needs its vendored boto3 present before zipping; tryon-mcp needs
+  # the shared vton_engines package present.
+  depends_on = [null_resource.vendor_memory_mcp, null_resource.sync_vton_engines]
 }
 
 resource "aws_lambda_function" "mcp" {
