@@ -40,8 +40,13 @@ spec:
           ports:
             - containerPort: 8502
           env:
+            # HeyGen credential from a k8s Secret (created by deploy/modules/avatar-heygen.sh),
+            # not an inline value — keeps the key out of the Deployment spec.
             - name: LIVEAVATAR_API_KEY
-              value: "${LIVEAVATAR_API_KEY}"
+              valueFrom:
+                secretKeyRef:
+                  name: storeai-avatar-secrets
+                  key: liveavatar-api-key
             - name: LIVEAVATAR_PORT
               value: "8502"
             - name: HOME
