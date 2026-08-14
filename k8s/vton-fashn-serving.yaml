@@ -46,6 +46,11 @@ spec:
               value: /weights
             - name: HF_HOME
               value: /weights/hf
+            # Must match the Ingress path in k8s/orchestrator-serving.yaml: the ALB
+            # forwards the original path, so requests arrive as /vton-fashn/infer.
+            # The server also keeps serving the bare /infer for in-cluster callers.
+            - name: PATH_PREFIX
+              value: /vton-fashn
           resources:
             requests:
               cpu: "1"

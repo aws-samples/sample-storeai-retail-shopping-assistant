@@ -29,6 +29,29 @@ TRYON_BUCKET = os.environ.get("TRYON_BUCKET", "")
 PRODUCT_IMAGES_BUCKET = os.environ.get("PRODUCT_IMAGES_BUCKET", "")
 VTON_QUEUE_URL = os.environ.get("VTON_QUEUE_URL", "")
 
+# Ceiling on a decoded customer photo (see upload_tryon_photo).
+MAX_PHOTO_BYTES = 6 * 1024 * 1024
+
+# Leading bytes -> ContentType, for the formats a browser `accept="image/*"` picker
+# realistically produces and Pillow can decode downstream. HEIC and friends are
+# rejected here with a clear message rather than failing inside the try-on engine.
+_IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+)
+
+
+def _sniff_image_type(data):
+    """Return the ContentType implied by the leading bytes, or None if unrecognised."""
+    for magic, content_type in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            return content_type
+    # WebP is RIFF-framed: "RIFF" <4-byte size> "WEBP".
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 CATEGORY_GARMENT_CLASS = {
     "mens_tshirt": "UPPER_BODY", "mens_polo": "UPPER_BODY", "mens_shirt": "UPPER_BODY",
     "mens_hoodie": "UPPER_BODY", "mens_jacket": "UPPER_BODY", "mens_sweater": "UPPER_BODY",
@@ -181,11 +204,34 @@ def upload_tryon_photo(p):
     b64 = p.get("photo_base64")
     if not cid or not b64:
         return {"error": "customer_id and photo_base64 required"}
+    # Malformed base64 raises binascii.Error (a ValueError), which without this
+    # surfaced as an unhandled Lambda error rather than the {"error": ...} shape the
+    # rest of this function returns. validate=True also rejects non-alphabet bytes
+    # instead of silently decoding them to garbage that fails further downstream.
+    try:
+        data = base64.b64decode(b64, validate=True)
+    except ValueError:
+        return {"error": "photo_base64 is not valid base64"}
+    if not data:
+        return {"error": "photo_base64 decoded to an empty image"}
+    # Bounds what lands in S3 and what the try-on engines will later try to decode.
+    # The synchronous path is already capped tighter by Lambda's 6MB request limit
+    # (~4.5MB decoded), so this mainly guards direct and queued invokers. It is a
+    # size bound only — it is not a decompression-bomb defense, which would need a
+    # pixel-count check where the image is actually decoded.
+    if len(data) > MAX_PHOTO_BYTES:
+        return {"error": f"photo exceeds the {MAX_PHOTO_BYTES // (1024 * 1024)}MB limit"}
+    content_type = _sniff_image_type(data)
+    if content_type is None:
+        return {"error": "photo must be a PNG, JPEG or WebP image"}
+    # The key keeps the .png suffix because it is hard-coded in five places across
+    # tryon-mcp, size-rec-mcp and the orchestrator; only the declared ContentType is
+    # corrected, since it was previously asserted as image/png whatever arrived.
     s3.put_object(
         Bucket=TRYON_BUCKET,
         Key=f"photos/{cid}/photo.png",
-        Body=base64.b64decode(b64),
-        ContentType="image/png",
+        Body=data,
+        ContentType=content_type,
     )
     return {"message": "uploaded"}
 
