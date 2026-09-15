@@ -27,6 +27,14 @@ fast here before making AWS changes.
 **Fix:** StoreAI applies Terraform in two passes to avoid this (D-041). If you ran a partial or manual
 apply, re-run `./deploy/storeai up` so the post-cluster pass resolves the ALB and re-applies the CDN.
 
+### A direct image build fails with `app/vton_engines/ is missing from the build context`
+**Cause:** The shared VTON prompt-engineering package lives at `components/shared/vton_engines/` and is
+copied into each consumer's build context by `scripts/sync-vton-engines.sh`. Those copies are
+gitignored, so a fresh clone does not have them. `./deploy/storeai up` runs the sync for you; building
+a component image directly (`docker build components/orchestrator`) does not.
+**Fix:** Run `./scripts/sync-vton-engines.sh` from the repo root, then rebuild. Edit only the canonical
+copy under `components/shared/vton_engines/` — the synced copies are overwritten on every sync.
+
 ## Runtime
 
 ### Pods stuck in `Pending`

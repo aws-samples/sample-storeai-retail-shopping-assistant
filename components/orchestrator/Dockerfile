@@ -4,6 +4,17 @@ WORKDIR /app
 COPY pyproject.toml .
 COPY app/ app/
 
+# The shared VTON prompt-engineering package is synced into this build context
+# (canonical copy: components/shared/vton_engines) and the synced copy is
+# gitignored, so a fresh clone has no app/vton_engines. Without this guard the
+# image builds fine and then raises ImportError on the first try-on request.
+# `./deploy/storeai up` syncs automatically; for a direct build, run
+# scripts/sync-vton-engines.sh from the repo root first.
+RUN test -f app/vton_engines/__init__.py || { \
+      echo "ERROR: app/vton_engines/ is missing from the build context." >&2; \
+      echo "Run ./scripts/sync-vton-engines.sh from the repo root, then rebuild." >&2; \
+      exit 1; }
+
 RUN pip install --no-cache-dir . && \
     rm -rf /root/.cache/pip
 
