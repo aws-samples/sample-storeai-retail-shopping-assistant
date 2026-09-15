@@ -10,7 +10,9 @@ mod_deploy() {
   local config="$1" region env account replicas repo tag ecr_uri mkey src
   region=$(python3 "${LIB_DIR}/resolve.py" --config "$config" get global.region); region="${region:-us-east-2}"
   env=$(python3 "${LIB_DIR}/resolve.py" --config "$config" get global.env); env="${env:-dev}"
-  replicas=$(python3 "${LIB_DIR}/resolve.py" --config "$config" get modules.orchestrator.replicas); replicas="${replicas:-2}"
+  # Fallback is 1, not 2: resolve.py 'get' reads only the supplied config with no defaults
+  # merge, so a config that omits replicas lands here, and conversation state is per-process.
+  replicas=$(python3 "${LIB_DIR}/resolve.py" --config "$config" get modules.orchestrator.replicas); replicas="${replicas:-1}"
 
   account=$(python3 "${LIB_DIR}/resolve.py" --config "$config" get global.accountId)
   if [ -z "$account" ] || [ "$account" = "auto" ] || [ "$account" = "None" ]; then

@@ -76,7 +76,8 @@ function buildConfig() {
   const modules = {};
   ORDER.forEach((m) => {
     modules[m] = { enabled: enabledSet.has(m) };
-    if (m === "orchestrator") modules[m].replicas = 2;
+    // 1 replica: conversation state is per-process (see docs/known-limitations.md).
+    if (m === "orchestrator") modules[m].replicas = 1;
     if (m === "cdn") modules[m].demoMode = "booth";
   });
   const en = (m) => enabledSet.has(m);

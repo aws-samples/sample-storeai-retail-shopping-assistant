@@ -943,8 +943,15 @@ async def virtual_try_on_endpoint(request: Request):
 
     # In-cluster engines (FASHN GPU, Qwen Image-Edit Neuron) run through the shared
     # _run_vton helper; any other engine routes through the MCP try-on Lambda below.
+    # _run_vton is synchronous and slow (S3 reads, a 120-180s inference call, image
+    # verification), so it goes to a worker thread. Calling it inline would block the
+    # event loop for the whole try-on, which stalls /health and every other request in
+    # this process. The streaming chat path already offloads the same helper, via
+    # asyncio.to_thread(_run_tool, ...) below.
     if engine in ("fashn_vton", "qwen_image_edit"):
-        return _run_vton(
+        import asyncio
+        return await asyncio.to_thread(
+            _run_vton,
             engine, cid, pid,
             steps=body.get("vton_steps", 50),
             cfg_scale=body.get("vton_cfg_scale"),

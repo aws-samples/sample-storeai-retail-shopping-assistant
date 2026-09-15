@@ -132,6 +132,12 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/healthcheck-path: /health
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    # A try-on request is idle at the load balancer for the whole inference, and the
+    # orchestrator allows 120s (FASHN) to 180s (Qwen), so the ALB's 60s default idle
+    # timeout would drop the connection and return 504 while the inference was still
+    # running. This is an ALB-wide attribute, so it also covers the /ws avatar socket
+    # and the voice paths on this Ingress, which only benefit from a longer idle window.
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=200
 spec:
   ingressClassName: internal-alb
   rules:

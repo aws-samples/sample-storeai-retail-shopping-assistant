@@ -89,7 +89,7 @@
     },
     "orchestrator": {
       "enabled": true,
-      "replicas": 2
+      "replicas": 1
     },
     "voice-nova": {
       "enabled": true
