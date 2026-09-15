@@ -171,6 +171,19 @@ spec:
                 name: liveavatar-svc
                 port:
                   number: 8502
+          # Listed before /vton so the more specific rule wins regardless of how the
+          # controller orders equal-length prefixes. Terraform hands the tryon-mcp
+          # Lambda FASHN_VTON_URL = <vton_alb_url>/vton-fashn
+          # (infra/terraform/modules/lambdas/main.tf); without this rule that URL fell
+          # through to the catch-all `/` and hit the orchestrator, which has no
+          # /vton-fashn/infer route.
+          - path: /vton-fashn
+            pathType: Prefix
+            backend:
+              service:
+                name: storeai-fashn-vton
+                port:
+                  number: 8081
           - path: /vton
             pathType: Prefix
             backend:

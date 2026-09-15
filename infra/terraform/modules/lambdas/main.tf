@@ -10,14 +10,21 @@ locals {
   prefix = "storeai-${var.env_name}"
   n      = var.table_names
 
-  # Per-function config: timeout + environment.
+  # Per-function config: timeout + memory + environment.
+  #
+  # tryon-mcp runs try-on inference inline over HTTP and its own client timeouts are
+  # 15s (garment fetch) + up to 300s (Qwen) or 120s (FASHN), so a 60s function timeout
+  # killed the invocation before either could return and produced no error path. 420s
+  # clears the 315s worst case with headroom for the Bedrock safety check, the Pillow
+  # branding pass and the S3 put. Memory is raised for that Pillow work; Lambda also
+  # scales CPU with memory, so 256MB made the branding step slower than the transfer.
   functions = {
-    "catalog-mcp"  = { timeout = 30, env = { PRODUCT_TABLE = local.n["products"] } }
-    "customer-mcp" = { timeout = 30, env = { CUSTOMER_TABLE = local.n["customers"], ORDER_TABLE = local.n["orders"] } }
-    "cart-mcp"     = { timeout = 30, env = { CART_TABLE = local.n["carts"], TRYON_ROOM_TABLE = local.n["tryon-room"], ORDER_TABLE = local.n["orders"], PRODUCT_TABLE = local.n["products"] } }
-    "tryon-mcp"    = { timeout = 60, env = merge({ PRODUCT_TABLE = local.n["products"], TRYON_BUCKET = var.tryon_bucket, PRODUCT_IMAGES_BUCKET = var.product_images_bucket, TRYON_JOB_TABLE = local.n["tryon-room"] }, var.vton_alb_url != "" ? { QWEN_VTON_URL = "${var.vton_alb_url}/vton", FASHN_VTON_URL = "${var.vton_alb_url}/vton-fashn" } : {}) } # Neuron VTON via internal ALB (D-040)
-    "memory-mcp"   = { timeout = 60, env = { MEMORY_TABLE = local.n["memory"], VECTOR_BUCKET = var.vector_bucket_name, MEMORY_INDEX = var.memory_index_name } }
-    "size-rec-mcp" = { timeout = 30, env = { CUSTOMER_TABLE = local.n["customers"], PRODUCT_TABLE = local.n["products"], TRYON_BUCKET = var.tryon_bucket } }
+    "catalog-mcp"  = { timeout = 30, memory = 256, env = { PRODUCT_TABLE = local.n["products"] } }
+    "customer-mcp" = { timeout = 30, memory = 256, env = { CUSTOMER_TABLE = local.n["customers"], ORDER_TABLE = local.n["orders"] } }
+    "cart-mcp"     = { timeout = 30, memory = 256, env = { CART_TABLE = local.n["carts"], TRYON_ROOM_TABLE = local.n["tryon-room"], ORDER_TABLE = local.n["orders"], PRODUCT_TABLE = local.n["products"] } }
+    "tryon-mcp"    = { timeout = 420, memory = 1024, env = merge({ PRODUCT_TABLE = local.n["products"], TRYON_BUCKET = var.tryon_bucket, PRODUCT_IMAGES_BUCKET = var.product_images_bucket, TRYON_JOB_TABLE = local.n["tryon-room"] }, var.vton_alb_url != "" ? { QWEN_VTON_URL = "${var.vton_alb_url}/vton", FASHN_VTON_URL = "${var.vton_alb_url}/vton-fashn" } : {}) } # Neuron VTON via internal ALB (D-040)
+    "memory-mcp"   = { timeout = 60, memory = 256, env = { MEMORY_TABLE = local.n["memory"], VECTOR_BUCKET = var.vector_bucket_name, MEMORY_INDEX = var.memory_index_name } }
+    "size-rec-mcp" = { timeout = 30, memory = 256, env = { CUSTOMER_TABLE = local.n["customers"], PRODUCT_TABLE = local.n["products"], TRYON_BUCKET = var.tryon_bucket } }
   }
 
   tags = { Project = "StoreAI", Environment = var.env_name, ManagedBy = "terraform" }
@@ -168,7 +175,7 @@ resource "aws_lambda_function" "mcp" {
   handler          = "lambda_function.lambda_handler"
   role             = aws_iam_role.mcp.arn
   timeout          = each.value.timeout
-  memory_size      = 256
+  memory_size      = each.value.memory
   filename         = data.archive_file.mcp[each.key].output_path
   source_code_hash = data.archive_file.mcp[each.key].output_base64sha256
 

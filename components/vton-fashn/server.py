@@ -23,6 +23,13 @@ log = logging.getLogger("fashn-vton")
 WEIGHTS_DIR = os.environ.get("WEIGHTS_DIR", "/weights")
 VALID_CATEGORIES = {"tops", "bottoms", "one-pieces"}
 
+# The internal ALB forwards the original request path unchanged, so a call routed by
+# the `/vton-fashn` Ingress rule arrives here as `/vton-fashn/infer`, not `/infer`.
+# Serve both forms: in-cluster callers (the orchestrator's `_run_vton` and the
+# `vton_verify` FASHN fallback) reach this Service directly on the bare paths, while
+# the tryon-mcp Lambda reaches it through the ALB. Mirrors vton-neuron/serve.py.
+PREFIX = os.environ.get("PATH_PREFIX", "/vton-fashn").rstrip("/")
+
 app = FastAPI(title="FASHN VTON v1.5")
 _pipeline = None
 
@@ -48,6 +55,7 @@ def _warm():
         log.exception("Startup model load failed")
 
 
+@app.get(f"{PREFIX}/health")
 @app.get("/health")
 def health():
     # 200 only when the model is loaded — used as the k8s readiness gate.
@@ -56,6 +64,7 @@ def health():
     return {"status": "ok", "model": "fashn-vton-1.5"}
 
 
+@app.post(f"{PREFIX}/infer")
 @app.post("/infer")
 async def infer(
     image1: UploadFile = File(...),          # garment
