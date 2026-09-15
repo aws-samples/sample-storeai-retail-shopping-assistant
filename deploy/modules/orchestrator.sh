@@ -46,6 +46,14 @@ mod_deploy() {
   cog_pool=$(terraform -chdir="${PROJECT_DIR}/infra/terraform" output -raw cognito_user_pool_id 2>/dev/null || true)
   cog_client=$(terraform -chdir="${PROJECT_DIR}/infra/terraform" output -raw cognito_client_id 2>/dev/null || true)
 
+  # Fail fast on empty Cognito outputs. Deploying with blank pool/client ids brings the
+  # orchestrator up with no auth config, so every authenticated request fails at runtime
+  # with an error that points here only after a long detour. Stop now with a clear message.
+  if [ -z "$cog_pool" ] || [ "$cog_pool" = "None" ] || [ -z "$cog_client" ] || [ "$cog_client" = "None" ]; then
+    echo "  ERROR: Cognito outputs not found (cognito_user_pool_id / cognito_client_id) — deploy the cognito-user module first." >&2
+    return 1
+  fi
+
   # Public base URL for shareable links (e.g. the try-on QR gallery). Use the CDN's
   # app_url output — storeai.<custom_domain> when a domain is set, else the CloudFront
   # URL — so the QR always points where the app is actually served (D-031/D-044).
