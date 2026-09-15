@@ -191,6 +191,22 @@ resource "aws_s3_bucket_lifecycle_configuration" "tryon" {
       days_after_initiation = 7
     }
   }
+  # Source customer photos, uploaded at photos/<customer_id>/photo.png. These are
+  # the personal input the try-on results are generated from, so they should not
+  # outlive the results that expire above. Same 7 days.
+  rule {
+    id     = "expire-tryon-photos"
+    status = "Enabled"
+    filter {
+      prefix = "photos/"
+    }
+    expiration {
+      days = 7
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
   # Bucket-wide abort of incomplete multipart uploads (CKV_AWS_300): the rule
   # above is prefix-scoped, so Checkov wants an unscoped rule that guarantees
   # stale multipart uploads are cleaned up anywhere in the bucket.
