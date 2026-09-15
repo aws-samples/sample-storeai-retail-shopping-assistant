@@ -9,6 +9,10 @@ Reads deploy/config/registry.yaml + a storeai.config.json and provides:
 
 Auto-enables hard dependencies (with a warning to stderr) and topologically
 sorts. Used by deploy/storeai. Requires PyYAML.
+
+--exact turns off dependency expansion, for teardown: `down --module X` removes
+exactly X. Expanding to dependencies is correct for `up` and destructive for
+`down`. See _resolve.
 """
 import argparse
 import json
@@ -47,31 +51,17 @@ def _enabled_modules(config):
     return [m for m, v in config.get("modules", {}).items() if v.get("enabled")]
 
 
-def _resolve(config, registry, requested=None):
-    """Return (ordered_modules, warnings). Auto-adds hard deps transitively."""
-    mods = registry["modules"]
-    warnings = []
-    if requested:
-        wanted = set(requested)
-    else:
-        wanted = set(_enabled_modules(config))
+def _dependents(mods):
+    """Reverse adjacency: module -> [modules that declare it in depends_on]."""
+    rdeps = {}
+    for m, meta in mods.items():
+        for dep in (meta or {}).get("depends_on", []) or []:
+            rdeps.setdefault(dep, []).append(m)
+    return rdeps
 
-    # transitive hard-dep closure
-    closure = set()
-    stack = list(wanted)
-    while stack:
-        m = stack.pop()
-        if m in closure:
-            continue
-        if m not in mods:
-            sys.exit(f"ERROR: unknown module '{m}' (not in registry.yaml)")
-        closure.add(m)
-        for dep in mods[m].get("depends_on", []) or []:
-            if dep not in wanted and dep not in closure:
-                warnings.append(f"auto-enabling dependency '{dep}' (required by '{m}')")
-            stack.append(dep)
 
-    # topological sort (Kahn)
+def _toposort(mods, closure):
+    """Deploy order within closure (Kahn), ignoring deps outside it."""
     indeg = {m: 0 for m in closure}
     for m in closure:
         for dep in mods[m].get("depends_on", []) or []:
@@ -90,7 +80,72 @@ def _resolve(config, registry, requested=None):
                     ready.sort()
     if len(order) != len(closure):
         sys.exit(f"ERROR: dependency cycle detected among {closure - set(order)}")
-    return order, warnings
+    return order
+
+
+def _resolve(config, registry, requested=None, exact=False):
+    """Return (ordered_modules, warnings).
+
+    Default (deploy): adds hard dependencies transitively, because a module
+    cannot come up before the things it needs.
+
+    exact=True (teardown): resolves to exactly the requested modules and expands
+    nothing. Dependency expansion is right for `up` and destructive for `down`.
+    Without this, `down --module orchestrator` resolved the orchestrator's
+    dependency closure (eks, network, ecr, data-plane, mcp-tools,
+    litellm-gateway) and handed every one of their tf_targets to
+    `terraform destroy`, tearing out the VPC, the cluster and the data plane in
+    order to remove one Deployment. Dependents are reported as warnings rather
+    than destroyed, which is the contract README.md and docs/getting-started.md
+    already state: remove a module and nothing that depends on it.
+    """
+    mods = registry["modules"]
+    warnings = []
+    if requested:
+        wanted = set(requested)
+    else:
+        wanted = set(_enabled_modules(config))
+
+    for m in wanted:
+        if m not in mods:
+            sys.exit(f"ERROR: unknown module '{m}' (not in registry.yaml)")
+
+    if exact:
+        closure = set(wanted)
+        # Anything still deployed on top of these loses what it was built on. Say so
+        # instead of removing it: a destructive command should touch only what it was
+        # asked to touch.
+        rdeps = _dependents(mods)
+        seen, stack = set(), list(wanted)
+        while stack:
+            m = stack.pop()
+            for other in rdeps.get(m, []):
+                if other in wanted or other in seen:
+                    continue
+                seen.add(other)
+                warnings.append(
+                    f"'{other}' depends on '{m}' and is not in this teardown; "
+                    f"it will be left without it"
+                )
+                stack.append(other)
+        return _toposort(mods, closure), warnings
+
+    # transitive hard-dep closure
+    closure = set()
+    stack = list(wanted)
+    while stack:
+        m = stack.pop()
+        if m in closure:
+            continue
+        if m not in mods:
+            sys.exit(f"ERROR: unknown module '{m}' (not in registry.yaml)")
+        closure.add(m)
+        for dep in mods[m].get("depends_on", []) or []:
+            if dep not in wanted and dep not in closure:
+                warnings.append(f"auto-enabling dependency '{dep}' (required by '{m}')")
+            stack.append(dep)
+
+    return _toposort(mods, closure), warnings
 
 
 def _prereq_value(config, name):
@@ -108,14 +163,14 @@ def _prereq_value(config, name):
 
 
 def cmd_order(config, registry, args):
-    order, warnings = _resolve(config, registry, args.module or None)
+    order, warnings = _resolve(config, registry, args.module or None, args.exact)
     for w in warnings:
         print(f"WARN: {w}", file=sys.stderr)
     print(" ".join(order))
 
 
 def cmd_tf_targets(config, registry, args):
-    order, _ = _resolve(config, registry, args.module or None)
+    order, _ = _resolve(config, registry, args.module or None, args.exact)
     targets = []
     for m in order:
         for t in registry["modules"][m].get("tf_targets", []) or []:
@@ -151,6 +206,11 @@ def main():
     ap = argparse.ArgumentParser(description="StoreAI deploy resolver")
     ap.add_argument("--config", required=True)
     ap.add_argument("--module", action="append", help="restrict to module(s) + deps")
+    ap.add_argument(
+        "--exact",
+        action="store_true",
+        help="resolve to exactly the named modules, no dependency expansion (teardown)",
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("order", "tf-targets", "validate"):
         sub.add_parser(name)

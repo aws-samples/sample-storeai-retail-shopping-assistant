@@ -173,7 +173,11 @@ storeai status   [--config FILE]
 storeai config   init [--interactive] | validate [FILE]
 ```
 
-- `--module` deploys or removes a single module plus its resolved dependencies.
+- `--module` on `up` deploys a module plus its resolved dependencies, so the module has what it
+  needs to run.
+- `--module` on `down` removes exactly the named module and nothing else. Dependencies are left in
+  place, since they are shared, and modules that depend on the one being removed are reported as
+  warnings rather than removed with it. Use `--all` for a full teardown.
 - `--yes` runs unattended (no prompts; defaults fill any gaps).
 - `up` always runs preflight first: required tools, valid credentials, container runtime, and a
   config whose enabled modules have satisfied prerequisites.

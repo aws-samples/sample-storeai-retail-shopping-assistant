@@ -10,6 +10,8 @@
 #
 # Deploys only ENABLED modules (or those named with --module) in dependency
 # order, resolving hard deps automatically (see deploy/config/registry.yaml).
+# `down --module M` removes exactly M: dependencies are shared, so a scoped
+# teardown never expands into them. `down --all` destroys everything in state.
 # Phase 1 implements the terraform-kind modules; other kinds print a pending
 # notice until their phase lands.
 ###############################################################################
@@ -156,8 +158,15 @@ do_up() {
 
 do_down() {
   require_config
-  local order rorder
-  order=$(resolve order)
+  local order rorder scope=""
+  # A scoped teardown removes exactly the named modules (resolve.py --exact).
+  # Dependency expansion is right for `up` and destructive for `down`: it pulls in
+  # everything the named module sits on, so `down --module orchestrator` used to
+  # hand terraform the VPC, the EKS cluster and the data plane. Modules that depend
+  # on what is being removed are reported as warnings, not destroyed.
+  # --all (no --module) keeps the enabled-module set as-is.
+  [ -n "${MODULE_ARGS// /}" ] && scope="--exact"
+  order=$(resolve ${scope} order)
   rorder=$(echo "$order" | awk '{for(i=NF;i>=1;i--) printf "%s ",$i}')
   echo "== Teardown (reverse dependency order): ${rorder}=="
   # Non-terraform teardown hooks run first (reverse order).
@@ -175,12 +184,20 @@ do_down() {
     esac
   done
   # Terraform backbone. --all (no --module) => full destroy of everything in state.
+  # An empty target list means two different things, so branch on the request and not
+  # on the list: with --module named and no terraform-backed module in scope there is
+  # nothing for terraform to do, while an untargeted `terraform destroy` would take the
+  # whole deployment. Only --all may run untargeted.
   tf_init "$CONFIG"
   local tf_targets=""
-  if [ -n "${MODULE_ARGS// /}" ]; then tf_targets=$(resolve tf-targets); fi
-  if [ -n "$tf_targets" ]; then
-    echo "== terraform destroy (targeted): ${tf_targets} =="
-    tf_destroy "$CONFIG" "$AUTO" "$tf_targets"
+  if [ -n "${MODULE_ARGS// /}" ]; then
+    tf_targets=$(resolve --exact tf-targets)
+    if [ -n "$tf_targets" ]; then
+      echo "== terraform destroy (targeted): ${tf_targets} =="
+      tf_destroy "$CONFIG" "$AUTO" "$tf_targets"
+    else
+      echo "== no terraform-backed module in scope; skipping terraform destroy =="
+    fi
   else
     echo "== terraform destroy (ALL state resources) =="
     tf_destroy "$CONFIG" "$AUTO" ""
