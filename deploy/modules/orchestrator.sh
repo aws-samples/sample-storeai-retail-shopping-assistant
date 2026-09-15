@@ -70,7 +70,17 @@ mod_deploy() {
     fi
   fi
 
-  export REGION="$region" ENV="$env" ACCOUNT_ID="$account" ORCH_REPLICAS="$replicas" IMAGE_TAG="$tag" LITELLM_MASTER_KEY="$mkey" COGNITO_USER_POOL_ID="${cog_pool}" COGNITO_APP_CLIENT_ID="${cog_client}" VTON_SAFETY_ENABLED="${VTON_SAFETY_ENABLED:-true}" PUBLIC_BASE_URL="${public_base}"
+  export REGION="$region" ENV="$env" ACCOUNT_ID="$account" ORCH_REPLICAS="$replicas" IMAGE_TAG="$tag" COGNITO_USER_POOL_ID="${cog_pool}" COGNITO_APP_CLIENT_ID="${cog_client}" VTON_SAFETY_ENABLED="${VTON_SAFETY_ENABLED:-true}" PUBLIC_BASE_URL="${public_base}"
+
+  # Gateway credential → k8s Secret, referenced by the Deployment via secretKeyRef.
+  # The key is no longer substituted into the manifest, so it does not appear in the
+  # rendered temp file or in `kubectl get deployment -o yaml`. Idempotent (create-or-update).
+  # Named for the consumer, not the gateway: the LiteLLM Helm chart owns its own
+  # masterkey Secret and must not be pre-created (see deploy/modules/litellm-gateway.sh).
+  kubectl create secret generic storeai-orchestrator-secrets -n "$ORCH_NS" \
+    --from-literal=litellm-api-key="$mkey" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
   local manifest
   manifest="$(mktemp -t orchestrator.XXXXXX.yaml)"
   envsubst < "${PROJECT_DIR}/k8s/orchestrator-serving.yaml" > "$manifest"
@@ -85,6 +95,7 @@ mod_deploy() {
 mod_teardown() {
   kubectl delete -f "${PROJECT_DIR}/k8s/orchestrator-serving.yaml" --ignore-not-found >/dev/null 2>&1 || \
     kubectl delete deployment,service storeai-orchestrator -n "$ORCH_NS" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete secret storeai-orchestrator-secrets -n "$ORCH_NS" --ignore-not-found >/dev/null 2>&1 || true
 }
 
 mod_verify() {

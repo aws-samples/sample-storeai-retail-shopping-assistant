@@ -50,8 +50,13 @@ spec:
             # LLM routing through the gateway (gateway model names, not raw Bedrock ids)
             - name: LITELLM_URL
               value: "http://litellm.default.svc.cluster.local:4000"
+            # Gateway credential from a k8s Secret (created by deploy/modules/orchestrator.sh),
+            # not an inline value — keeps the key out of the Deployment spec.
             - name: LITELLM_API_KEY
-              value: "${LITELLM_MASTER_KEY}"
+              valueFrom:
+                secretKeyRef:
+                  name: storeai-orchestrator-secrets
+                  key: litellm-api-key
             - name: CHAT_MODEL
               value: "bedrock-claude"
             - name: ROUTER_MODEL

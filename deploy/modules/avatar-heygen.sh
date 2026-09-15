@@ -33,7 +33,15 @@ mod_deploy() {
   podman build --platform linux/arm64 -t "${ecr_uri}:${tag}" -t "${ecr_uri}:latest" "$src"
   podman push "${ecr_uri}:${tag}"; podman push "${ecr_uri}:latest"
 
-  export REGION="$region" ENV="$env" ACCOUNT_ID="$account" IMAGE_TAG="$tag" LIVEAVATAR_API_KEY="$key"
+  export REGION="$region" ENV="$env" ACCOUNT_ID="$account" IMAGE_TAG="$tag"
+
+  # HeyGen credential → k8s Secret, referenced by the Deployment via secretKeyRef.
+  # The key is no longer substituted into the manifest, so it does not appear in the
+  # rendered temp file or in `kubectl get deployment -o yaml`. Idempotent (create-or-update).
+  kubectl create secret generic storeai-avatar-secrets -n "$NS" \
+    --from-literal=liveavatar-api-key="$key" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
   manifest="$(mktemp -t avatar.XXXXXX.yaml)"
   envsubst < "${PROJECT_DIR}/k8s/avatar-serving.yaml" > "$manifest"
   kubectl apply -f "$manifest"; rm -f "$manifest"
@@ -41,5 +49,12 @@ mod_deploy() {
   echo "  avatar service: http://liveavatar-svc.${NS}.svc.cluster.local:8502 (/avatar,/token,/ws)"
 }
 
-mod_teardown() { kubectl delete deployment storeai-avatar service liveavatar-svc -n "$NS" --ignore-not-found >/dev/null 2>&1 || true; }
+mod_teardown() {
+  # TYPE/NAME per object: `kubectl delete TYPE NAME...` takes a single type, so the bare
+  # form treated "service" and "liveavatar-svc" as deployment names and left the Service
+  # behind. The comma form other modules use does not fit here — the Deployment and the
+  # Service have different names (k8s/avatar-serving.yaml).
+  kubectl delete deployment/storeai-avatar service/liveavatar-svc -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete secret storeai-avatar-secrets -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+}
 mod_verify() { kubectl get pods -n "$NS" -l app=storeai-avatar 2>/dev/null || true; }
