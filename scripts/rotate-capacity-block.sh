@@ -21,7 +21,7 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG="${ROOT_DIR}/deploy/config/defaults.json"
 SSM_NAME="/storeai-${ENV}/neuron/capacity_block_reservation_id"
 CLUSTER="storeai-${ENV}"
-NG="storeai-${ENV}-neuron"
+NG="storeai-${ENV}-neuron-cb"
 
 echo "Cluster: ${CLUSTER} | Region: ${REGION} | CB: ${CB_ID}${AZ:+ | AZ: ${AZ}}"
 
@@ -30,18 +30,21 @@ aws ssm put-parameter --name "$SSM_NAME" --value "$CB_ID" --type String --overwr
   --region "$REGION" --query 'Version' --output text >/dev/null
 echo "✅ SSM ${SSM_NAME} updated"
 
-# 2. Deploy config — resolver prereq (capacityBlock.reservationId) + subnet AZ + enable neuron modules.
+# 2. Deploy config — resolver prereq (prerequisites.capacityBlock.reservationId) + subnet AZ + enable neuron modules.
 python3 - "$CONFIG" "$CB_ID" "$AZ" <<'PY'
 import json, sys, collections
 path, cbid, az = sys.argv[1], sys.argv[2], sys.argv[3]
 d = json.load(open(path), object_pairs_hook=collections.OrderedDict)
-d.setdefault("capacityBlock", {})["reservationId"] = cbid
+# reservationId lives under prerequisites.capacityBlock — that is what
+# deploy/lib/tf.sh and resolve.py read, and the schema root is
+# additionalProperties:false, so a top-level key fails `storeai up` preflight.
+d.setdefault("prerequisites", {}).setdefault("capacityBlock", {})["reservationId"] = cbid
 if az:
     d.setdefault("global", {})["capacityBlockAz"] = az
 for m in ("llm", "image-edit-model"):
     d.setdefault("modules", {}).setdefault(m, {})["enabled"] = True
 json.dump(d, open(path, "w"), indent=2); open(path, "a").write("\n")
-print("✅ config updated (capacityBlock.reservationId, capacityBlockAz, modules llm+image-edit-model enabled)")
+print("✅ config updated (prerequisites.capacityBlock.reservationId, capacityBlockAz, modules llm+image-edit-model enabled)")
 PY
 
 # 3. Scale the existing Neuron MNG to 0 (a CB node group must be at 0 before its reservation changes).
