@@ -164,6 +164,34 @@ spec:
                 name: storeai-whisper
                 port:
                   number: 8765
+          - path: /avatar
+            pathType: Exact
+            backend:
+              service:
+                name: liveavatar-svc
+                port:
+                  number: 8502
+          - path: /avatars
+            pathType: Exact
+            backend:
+              service:
+                name: liveavatar-svc
+                port:
+                  number: 8502
+          - path: /token
+            pathType: Exact
+            backend:
+              service:
+                name: liveavatar-svc
+                port:
+                  number: 8502
+          - path: /pair
+            pathType: Exact
+            backend:
+              service:
+                name: liveavatar-svc
+                port:
+                  number: 8502
           - path: /ws
             pathType: Prefix
             backend:

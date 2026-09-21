@@ -8,6 +8,7 @@ import * as api from "@/lib/api";
 import type { ChatMessage } from "@/lib/types";
 import { useNovaSonic } from "@/hooks/useNovaSonic";
 import { wsUrl } from "@/lib/ws";
+import { avatarSenderUrl } from "@/lib/avatar";
 import CameraCapture from "@/components/CameraCapture";
 
 const API = process.env.NEXT_PUBLIC_LAMBDA_API_URL || "";
@@ -286,20 +287,20 @@ export default function AssistantPage() {
   const sendToAvatar = useCallback((text: string) => {
     if (!cfg.liveAvatarEnabled) return;
     try {
-      const ws = new WebSocket(wsUrl(process.env.NEXT_PUBLIC_LIVEAVATAR_URL, "/ws?role=streamlit"));
+      const ws = new WebSocket(avatarSenderUrl(idToken));
       ws.onopen = () => { ws.send(JSON.stringify({ type: "speak", text })); ws.close(); };
       setAvatarSpeaking(true);
     } catch {}
-  }, [cfg.liveAvatarEnabled]);
+  }, [cfg.liveAvatarEnabled, idToken]);
 
   const interruptAvatar = useCallback(() => {
     if (!cfg.liveAvatarEnabled) return;
     try {
-      const ws = new WebSocket(wsUrl(process.env.NEXT_PUBLIC_LIVEAVATAR_URL, "/ws?role=streamlit"));
+      const ws = new WebSocket(avatarSenderUrl(idToken));
       ws.onopen = () => { ws.send(JSON.stringify({ type: "interrupt" })); ws.close(); };
     } catch {}
     setAvatarSpeaking(false);
-  }, [cfg.liveAvatarEnabled]);
+  }, [cfg.liveAvatarEnabled, idToken]);
 
   // Avatar barge-in: monitor mic for sustained speech, interrupt avatar if detected
   const avatarBargeInRef = useRef<(() => void) | null>(null);

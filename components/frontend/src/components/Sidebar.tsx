@@ -1,9 +1,11 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useConfig, type ChatModel, type STTEngine } from "@/context/ConfigContext";
+import { useCognito } from "@/context/CognitoAuthContext";
+import { createAvatarWindow } from "@/lib/avatar";
 
 // Tap/click-toggle info popover — works on touchscreens (booth kiosk) AND mouse,
 // unlike a native `title` tooltip which only appears on hover.
@@ -44,9 +46,6 @@ const ALL_NAV = [
 const BOOTH_SHOPPING_PAGES = ["/shop", "/cart", "/tryon-room", "/assistant"];
 const BOOTH_TRYON_PAGES = ["/tryon-room", "/cart", "/assistant"];
 
-const LIVEAVATAR_PORT = process.env.NEXT_PUBLIC_LIVEAVATAR_PORT || "8502";
-const VOICE_HOST = process.env.NEXT_PUBLIC_NOVA_SONIC_HOST || "localhost";
-const AVATAR_URL = VOICE_HOST === "localhost" ? `http://localhost:${LIVEAVATAR_PORT}` : `https://${VOICE_HOST}/avatar`;
 const HAS_LIVEAVATAR = !!process.env.NEXT_PUBLIC_NOVA_SONIC_HOST || !!process.env.NEXT_PUBLIC_LIVEAVATAR_API_KEY || process.env.NEXT_PUBLIC_LIVEAVATAR_ENABLED === "true";
 
 function Toggle({ label, value, onChange, help }: { label: string; value: boolean; onChange: (v: boolean) => void; help?: string }) {
@@ -61,6 +60,23 @@ function Toggle({ label, value, onChange, help }: { label: string; value: boolea
 }
 
 export default function Sidebar() {
+  const { idToken } = useCognito();
+  const tokenRef = useRef(idToken);
+  tokenRef.current = idToken;
+  const avatarWindow = useRef<ReturnType<typeof createAvatarWindow> | null>(null);
+  const [avatarError, setAvatarError] = useState("");
+  useEffect(() => () => { avatarWindow.current?.dispose(); }, []);
+  useEffect(() => {
+    if (!idToken && process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID) avatarWindow.current?.close();
+  }, [idToken]);
+  const openAvatar = () => {
+    try {
+      avatarWindow.current ??= createAvatarWindow(() => tokenRef.current, setAvatarError);
+      avatarWindow.current.open();
+    } catch (error) {
+      setAvatarError(error instanceof Error ? error.message : "Unable to open the avatar.");
+    }
+  };
   const path = usePathname();
   const { customer, signOut, cartCount, tryonCount } = useAuth();
   const cfg = useConfig();
@@ -195,11 +211,12 @@ export default function Sidebar() {
                 <div className="mb-2">
                   <Toggle label="AI Avatar (TTS)" value={cfg.liveAvatarEnabled} onChange={cfg.setLiveAvatarEnabled} />
                   {cfg.liveAvatarEnabled && (
-                    <a href={AVATAR_URL} target="storeai_avatar"
+                    <button type="button" onClick={openAvatar}
                       className="ml-4 mt-1 text-[11px] text-[hsl(0,0%,12%)] underline underline-offset-2 hover:text-[hsl(0,0%,30%)]">
                       Open Avatar Window
-                    </a>
+                    </button>
                   )}
+                  {avatarError && <p role="alert" className="text-xs text-red-700">{avatarError}</p>}
                 </div>
               )}
             </>

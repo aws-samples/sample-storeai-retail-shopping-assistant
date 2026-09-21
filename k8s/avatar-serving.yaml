@@ -40,6 +40,12 @@ spec:
           ports:
             - containerPort: 8502
           env:
+            - name: COGNITO_USER_POOL_ID
+              value: "${COGNITO_USER_POOL_ID}"
+            - name: COGNITO_APP_CLIENT_ID
+              value: "${COGNITO_APP_CLIENT_ID}"
+            - name: COGNITO_REGION
+              value: "${REGION}"
             # HeyGen credential from a k8s Secret (created by deploy/modules/avatar-heygen.sh),
             # not an inline value — keeps the key out of the Deployment spec.
             - name: LIVEAVATAR_API_KEY
