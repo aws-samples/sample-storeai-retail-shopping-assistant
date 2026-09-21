@@ -26,10 +26,34 @@ video{max-width:100%;max-height:100%;object-fit:contain}
 <div id="video-wrap">
   <video id="avatarVideo" autoplay playsinline></video>
 </div>
+<div id="relayStatus" role="status">Waiting for StoreAI...</div>
 <div id="status">Select an avatar and click Start</div>
 
 <script type="module">
-import { LiveAvatarSession, SessionEvent, SessionState, AgentEventsEnum } from 'https://esm.sh/@heygen/liveavatar-web-sdk@0.0.12';
+const AUTH_ENABLED = __AVATAR_AUTH_ENABLED__;
+const APP_ORIGIN = location.origin;
+const $relayStatus = document.getElementById('relayStatus');
+let reconnectTimer = null;
+let pairTimer = null;
+let pairRequestId = null;
+let closing = false;
+const tokenRequests = new Map();
+
+function requestSessionToken(avatarId, voiceId) {
+  if (!AUTH_ENABLED) {
+    return fetch('/token', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({avatar_id: avatarId, voice_id: voiceId})
+    }).then(async r => { if (!r.ok) throw new Error(`Avatar request failed (${r.status}).`); return r.json(); });
+  }
+  return new Promise((resolve, reject) => {
+    if (!window.opener || window.opener.closed) return reject(new Error('Open the avatar from StoreAI.'));
+    const requestId = crypto.randomUUID();
+    const timer = setTimeout(() => { tokenRequests.delete(requestId); reject(new Error('StoreAI session request timed out.')); }, 12000);
+    tokenRequests.set(requestId, {resolve, reject, timer});
+    window.opener.postMessage({type: 'avatar-token-request', requestId, avatarId, voiceId}, APP_ORIGIN);
+  });
+}
 
 const $status = document.getElementById('status');
 const $dropdown = document.getElementById('avatarDropdown');
@@ -65,12 +89,9 @@ async function startAvatar(avatarId, voiceId) {
   $status.textContent = 'Starting avatar session...';
 
   try {
-    const res = await fetch('/token', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ avatar_id: avatarId, voice_id: voiceId })
-    });
-    const data = await res.json();
+    const data = await requestSessionToken(avatarId, voiceId);
+    const { LiveAvatarSession, SessionEvent, SessionState, AgentEventsEnum } =
+      await import('https://esm.sh/@heygen/liveavatar-web-sdk@0.0.12');
     if (data.error) {
       $status.textContent = 'Error: ' + JSON.stringify(data.detail || data.error);
       $startBtn.disabled = false;
@@ -134,9 +155,12 @@ $stopSpeakBtn.onclick = () => {
   }
 };
 
-function connectWS() {
+function connectWS(nonce) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws?role=browser`);
+  if (ws) { ws.onclose = null; ws.close(); }
+  const query = AUTH_ENABLED ? `?pair=${encodeURIComponent(nonce)}` : '';
+  ws = new WebSocket(`${proto}://${location.host}/ws${query}`);
+  ws.onopen = () => { $relayStatus.textContent = 'Connected to StoreAI'; };
   ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
@@ -152,16 +176,68 @@ function connectWS() {
       }
     } catch(err) {}
   };
-  ws.onclose = () => setTimeout(connectWS, 2000);
+  ws.onclose = () => {
+    $relayStatus.textContent = 'Reconnecting to StoreAI...';
+    if (!closing) reconnectTimer = setTimeout(requestPair, 2000);
+  };
   ws.onerror = () => ws.close();
 }
 
+function requestPair() {
+  if (closing) return;
+  if (!AUTH_ENABLED) { connectWS(); return; }
+  if (location.protocol !== 'https:' || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+    $relayStatus.textContent = 'Open the avatar from the deployed HTTPS StoreAI application.';
+    return;
+  }
+  if (!window.opener || window.opener.closed) {
+    $relayStatus.textContent = 'Open this window using Open Avatar Window in StoreAI.';
+    return;
+  }
+  pairRequestId = crypto.randomUUID();
+  window.opener.postMessage({type: 'avatar-ready', requestId: pairRequestId}, APP_ORIGIN);
+  clearTimeout(pairTimer);
+  pairTimer = setTimeout(requestPair, 15000);
+}
+
+window.addEventListener('message', (event) => {
+  if (event.origin !== APP_ORIGIN || event.source !== window.opener) return;
+  const data = event.data;
+  if (!data || typeof data.requestId !== 'string') return;
+  if (data.type === 'avatar-pair' && data.requestId === pairRequestId &&
+      typeof data.nonce === 'string' && /^[A-Za-z0-9_-]{43}$/.test(data.nonce)) {
+    clearTimeout(pairTimer);
+    pairRequestId = null;
+    connectWS(data.nonce);
+  } else if (data.type === 'avatar-auth-error' && data.requestId === pairRequestId) {
+    clearTimeout(pairTimer);
+    pairRequestId = null;
+    $relayStatus.textContent = 'Sign in to StoreAI and open the avatar again.';
+  } else if (tokenRequests.has(data.requestId)) {
+    const pending = tokenRequests.get(data.requestId);
+    if (data.type === 'avatar-token-result' && typeof data.sessionToken === 'string') {
+      clearTimeout(pending.timer);
+      tokenRequests.delete(data.requestId);
+      pending.resolve({session_token: data.sessionToken});
+    } else if (data.type === 'avatar-auth-error') {
+      clearTimeout(pending.timer);
+      tokenRequests.delete(data.requestId);
+      pending.reject(new Error('Unable to start the avatar session.'));
+    }
+  }
+});
+
 window.addEventListener('beforeunload', () => {
+  closing = true;
+  clearTimeout(reconnectTimer);
+  clearTimeout(pairTimer);
+  ws?.close();
+  for (const pending of tokenRequests.values()) clearTimeout(pending.timer);
   if (session) { try { session.stop(); } catch(e) {} }
 });
 
-loadAvatars();
-connectWS();
+loadAvatars().catch(() => { $status.textContent = "Unable to load avatars."; });
+requestPair();
 </script>
 </body>
 </html>

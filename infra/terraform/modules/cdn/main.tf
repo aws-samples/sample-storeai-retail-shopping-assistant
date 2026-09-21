@@ -314,6 +314,21 @@ resource "aws_cloudfront_distribution" "main" {
     compress                 = false
   }
 
+  # Avatar HTML and auth endpoints share the frontend origin; never cache credentials.
+  dynamic "ordered_cache_behavior" {
+    for_each = ["/avatar", "/avatars", "/token", "/pair"]
+    content {
+      path_pattern             = ordered_cache_behavior.value
+      target_origin_id         = "alb-api"
+      viewer_protocol_policy   = "https-only"
+      allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+      cached_methods           = ["GET", "HEAD"]
+      cache_policy_id          = data.aws_cloudfront_cache_policy.disabled.id
+      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id
+      compress                 = false
+    }
+  }
+
   ordered_cache_behavior {
     path_pattern             = "/ws"
     target_origin_id         = "alb-api"

@@ -23,6 +23,15 @@ mod_deploy() {
     return 1
   fi
 
+  local cog_pool cog_client
+  cog_pool=$(terraform -chdir="${PROJECT_DIR}/infra/terraform" output -raw cognito_user_pool_id)
+  cog_client=$(terraform -chdir="${PROJECT_DIR}/infra/terraform" output -raw cognito_client_id)
+  if [ -z "$cog_pool" ] || [ "$cog_pool" = "None" ] || [ -z "$cog_client" ] || [ "$cog_client" = "None" ]; then
+    echo "ERROR: Cognito pool/client are required for the deployed avatar." >&2
+    return 1
+  fi
+  export COGNITO_USER_POOL_ID="$cog_pool" COGNITO_APP_CLIENT_ID="$cog_client"
+
   src="${PROJECT_DIR}/components/avatar"
   repo="storeai-${env}-liveavatar"
   tag="$(cd "$PROJECT_DIR" && git rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%H%M%S)"

@@ -1,1 +1,2 @@
 aiohttp>=3.9
+PyJWT[crypto]>=2.8
