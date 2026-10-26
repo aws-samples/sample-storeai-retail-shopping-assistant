@@ -238,7 +238,12 @@ def load_pipeline():
 @app.get(f"{PREFIX}/health")
 @app.get("/health")
 def health():
-    return {"status": "ok" if _pipe is not None else "loading", "world_size": WORLD_SIZE}
+    # 200 only when the model is loaded — used as the k8s readiness gate.
+    # Returning 200 while loading lets k8s route /infer traffic to a pod that
+    # is still loading compiled models (minutes), so every request 503s.
+    if _pipe is None:
+        return JSONResponse({"status": "loading", "world_size": WORLD_SIZE}, status_code=503)
+    return {"status": "ok", "world_size": WORLD_SIZE}
 
 
 def _run_inference(image1_bytes: bytes, image2_bytes, prompt: str,
